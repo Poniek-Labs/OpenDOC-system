@@ -5,8 +5,8 @@ param(
     [string]$CommitMessage = "",
     [string]$RemoteName = "origin",
     [string]$RemoteUrl = "https://github.com/Poniek-Labs/OpenDOC-system.git",
-    [string]$GitUserName = "codebunny100",
-    [string]$GitUserEmail = "es.wendland@gmail.com",
+    [string]$GitUserName = "",
+    [string]$GitUserEmail = "",
     [ValidateSet("major", "minor", "none")]
     [string]$ReleaseType = "",
     [string]$VersionFile = "VERSION",
@@ -96,6 +96,18 @@ function Bump-Version {
     }
 }
 
+function Is-NonFastForwardError {
+    param([string]$ErrorText)
+    return ($ErrorText -match "fetch first|non-fast-forward|failed to push some refs")
+}
+
+function Ensure-NoStaleMergeState {
+    if (Test-Path -LiteralPath ".git/MERGE_HEAD") {
+        Write-Host "Detected unfinished merge. Aborting previous merge attempt..."
+        Run-Git -Command @("merge", "--abort") | Out-Null
+    }
+}
+
 $resolvedRepoPath = (Resolve-Path -LiteralPath $RepoPath).Path
 Set-Location -LiteralPath $resolvedRepoPath
 
@@ -114,11 +126,16 @@ if (-not $isRepo) {
     Run-Git -Command @("init")
 }
 
-# Optional identity setup for new environments
-if (-not [string]::IsNullOrWhiteSpace($GitUserName)) {
+# Clean up leftover failed merge state from previous runs.
+Ensure-NoStaleMergeState
+
+# Optional identity setup only when explicitly requested.
+$effectiveUserName = ((& git config user.name) 2>$null | Out-String).Trim()
+$effectiveUserEmail = ((& git config user.email) 2>$null | Out-String).Trim()
+if (-not [string]::IsNullOrWhiteSpace($GitUserName) -and $GitUserName -ne $effectiveUserName) {
     Run-Git -Command @("config", "user.name", $GitUserName) | Out-Null
 }
-if (-not [string]::IsNullOrWhiteSpace($GitUserEmail)) {
+if (-not [string]::IsNullOrWhiteSpace($GitUserEmail) -and $GitUserEmail -ne $effectiveUserEmail) {
     Run-Git -Command @("config", "user.email", $GitUserEmail) | Out-Null
 }
 
@@ -128,12 +145,12 @@ if ([string]::IsNullOrWhiteSpace($effectiveUserName) -or [string]::IsNullOrWhite
     Write-Host "Warning: git user identity is not set. Commit may fail until configured."
 }
 
-# Ensure branch exists and is checked out
-try {
-    Run-Git -Command @("checkout", "-B", $Branch)
-} catch {
-    # Fallback for older git
+# Ensure branch exists and is checked out.
+$branchList = ((& git branch --list $Branch 2>$null) | Out-String).Trim()
+if ([string]::IsNullOrWhiteSpace($branchList)) {
     Run-Git -Command @("checkout", "-b", $Branch)
+} else {
+    Run-Git -Command @("checkout", $Branch)
 }
 
 if ($RemoteUrl -ne "") {
@@ -192,12 +209,28 @@ try {
     Run-Git -Command @("push", "-u", $RemoteName, $Branch)
 } catch {
     $errText = $_.Exception.Message
-    $isNonFastForward = $errText -match "fetch first|non-fast-forward|failed to push some refs"
-    if ($isNonFastForward -and $ForceWithLease) {
-        Write-Host "Non-fast-forward detected. Retrying with --force-with-lease..."
-        Run-Git -Command @("push", "-u", $RemoteName, $Branch, "--force-with-lease")
-    } elseif ($isNonFastForward) {
-        throw "$errText`nHint: Remote has commits you don't have locally. Re-run with -ForceWithLease if you want to overwrite remote main safely."
+    if (Is-NonFastForwardError -ErrorText $errText) {
+        Write-Host "Non-fast-forward detected. Fetching and auto-merging remote history..."
+        Run-Git -Command @("fetch", $RemoteName, $Branch)
+
+        try {
+            Run-Git -Command @("merge", "--allow-unrelated-histories", "--no-edit", "$RemoteName/$Branch")
+        } catch {
+            $mergeErr = $_.Exception.Message
+            throw "$mergeErr`nHint: Auto-merge hit conflicts. Resolve conflicts, then run the script again."
+        }
+
+        try {
+            Run-Git -Command @("push", "-u", $RemoteName, $Branch)
+        } catch {
+            $retryErr = $_.Exception.Message
+            if ((Is-NonFastForwardError -ErrorText $retryErr) -and $ForceWithLease) {
+                Write-Host "Still blocked after merge. Retrying with --force-with-lease..."
+                Run-Git -Command @("push", "-u", $RemoteName, $Branch, "--force-with-lease")
+            } else {
+                throw "$retryErr`nHint: Re-run with -ForceWithLease to overwrite remote branch."
+            }
+        }
     } else {
         throw
     }
