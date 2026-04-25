@@ -67,6 +67,12 @@ After first setup, future pushes can be:
 .\push_to_github.ps1
 ```
 
+If GitHub rejects push because remote `main` already has commits:
+
+```powershell
+.\push_to_github.ps1 -ForceWithLease
+```
+
 Non-interactive examples:
 
 ```powershell

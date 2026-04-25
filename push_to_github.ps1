@@ -11,6 +11,7 @@ param(
     [string]$ReleaseType = "",
     [string]$VersionFile = "VERSION",
     [switch]$CreateTag = $true,
+    [switch]$ForceWithLease,
     [switch]$InitRepo
 )
 
@@ -187,9 +188,26 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 # Push
-Run-Git -Command @("push", "-u", $RemoteName, $Branch)
+try {
+    Run-Git -Command @("push", "-u", $RemoteName, $Branch)
+} catch {
+    $errText = $_.Exception.Message
+    $isNonFastForward = $errText -match "fetch first|non-fast-forward|failed to push some refs"
+    if ($isNonFastForward -and $ForceWithLease) {
+        Write-Host "Non-fast-forward detected. Retrying with --force-with-lease..."
+        Run-Git -Command @("push", "-u", $RemoteName, $Branch, "--force-with-lease")
+    } elseif ($isNonFastForward) {
+        throw "$errText`nHint: Remote has commits you don't have locally. Re-run with -ForceWithLease if you want to overwrite remote main safely."
+    } else {
+        throw
+    }
+}
 if ($CreateTag -and $effectiveReleaseType -ne "none") {
-    Run-Git -Command @("push", $RemoteName, "--tags")
+    if ($ForceWithLease) {
+        Run-Git -Command @("push", $RemoteName, "--tags", "--force-with-lease")
+    } else {
+        Run-Git -Command @("push", $RemoteName, "--tags")
+    }
 }
 
 Write-Host "Push complete."
