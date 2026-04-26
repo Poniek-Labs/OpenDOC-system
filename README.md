@@ -44,42 +44,6 @@ python cli.py init test.sodf --title "Test"
 python cli.py inspect test.sodf
 ```
 
-## Push To GitHub
-
-From the `opendoc` folder:
-
-```powershell
-.\push_to_github.ps1 -InitRepo -GitUserName "Your Name" -GitUserEmail "you@example.com"
-```
-
-The script will ask:
-
-- `1` Major release: bumps whole number (`1.0 -> 2.0`)
-- `2` Minor release: bumps decimal (`1.0 -> 1.1`)
-
-It updates `VERSION`, commits, creates a tag (`vX.Y`), and pushes to:
-
-`https://github.com/Poniek-Labs/OpenDOC-system.git`
-
-After first setup, future pushes can be:
-
-```powershell
-.\push_to_github.ps1
-```
-
-If GitHub rejects push because remote `main` already has commits:
-
-```powershell
-.\push_to_github.ps1 -ForceWithLease
-```
-
-Non-interactive examples:
-
-```powershell
-.\push_to_github.ps1 -ReleaseType major
-.\push_to_github.ps1 -ReleaseType minor
-.\push_to_github.ps1 -ReleaseType none -CommitMessage "docs: update wiki"
-```
 
 ## Goals
 
